@@ -40,19 +40,19 @@ void cholesky(int ts, int nt, double* Ah[nt][nt])
       LAPACKE_dpotrf(LAPACK_COL_MAJOR, 'L', ts, Ah[k][k], lda);
 
       // Triangular systems
-      for (int i = k + 1; i < nt; i++) {
-         #pragma omp task depend(in: Ah[k][k]) depend(inout: Ah[k][i])
-         cblas_dtrsm(CblasColMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit, ts, ts, 1.0, Ah[k][k], lda, Ah[k][i], ldb);
+      for (int m = k + 1; m < nt; m++) {
+         #pragma omp task depend(in: Ah[k][k]) depend(inout: Ah[k][m])
+         cblas_dtrsm(CblasColMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit, ts, ts, 1.0, Ah[k][k], lda, Ah[k][m], ldb);
       }
 
       // Update trailing matrix
-      for (int i = k + 1; i < nt; i++) {
-         for (int j = k + 1; j < i; j++) {
-            #pragma omp task depend(in: Ah[k][i], Ah[k][j]) depend(inout: Ah[j][i])
-            cblas_dgemm(CblasColMajor, CblasNoTrans, CblasTrans, ts, ts, ts, -1.0, Ah[k][i], lda, Ah[k][j], ldb, 1.0, Ah[j][i], ldc);
+      for (int n = k + 1; n < nt; n++) {
+         #pragma omp task depend(in: Ah[k][n]) depend(inout: Ah[n][n])
+         cblas_dsyrk(CblasColMajor, CblasLower, CblasNoTrans, ts, ts, -1.0, Ah[k][n], lda, 1.0, Ah[n][n], ldb);
+         for (int m = n + 1; m < nt; m++) {
+            #pragma omp task depend(in: Ah[k][m], Ah[k][n]) depend(inout: Ah[n][m])
+            cblas_dgemm(CblasColMajor, CblasNoTrans, CblasTrans, ts, ts, ts, -1.0, Ah[k][m], lda, Ah[k][n], ldb, 1.0, Ah[n][m], ldc);
          }
-         #pragma omp task depend(in: Ah[k][i]) depend(inout: Ah[i][i])
-         cblas_dsyrk(CblasColMajor, CblasLower, CblasNoTrans, ts, ts, -1.0, Ah[k][i], lda, 1.0, Ah[i][i], ldb);
       }
    }
 
