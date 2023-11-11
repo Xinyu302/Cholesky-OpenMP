@@ -25,6 +25,9 @@
 // m, n means tile matrix length.
 void cholesky(int ts, int nt, double* Ah[nt][nt])
 {
+   int lda = ts * nt; //  tile size multiply num tile should be origin matrix size
+   int ldb = lda;
+   int ldc = lda; // square matrix
 #ifdef VERBOSE
 	printf("> Computing Cholesky Factorization: indirect blocked matrix...\n");
 #endif
@@ -34,22 +37,22 @@ void cholesky(int ts, int nt, double* Ah[nt][nt])
    for (int k = 0; k < nt; k++) {
       // Diagonal Block factorization: using LAPACK
       #pragma omp task depend(inout: Ah[k][k]) priority(2*nt - 2*k)
-      LAPACKE_dpotrf(LAPACK_COL_MAJOR, 'L', ts, Ah[k][k], ts);
+      LAPACKE_dpotrf(LAPACK_COL_MAJOR, 'L', ts, Ah[k][k], lda);
 
       // Triangular systems
-      for (int i = k + 1; i < nt; i++) {
-         #pragma omp task depend(in: Ah[k][k]) depend(inout: Ah[k][i]) priority(2*nt - 2*k - i)
-         cblas_dtrsm(CblasColMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit, ts, ts, 1.0, Ah[k][k], ts, Ah[k][i], ts);
+      for (int m = k + 1; m < nt; m++) {
+         #pragma omp task depend(in: Ah[k][k]) depend(inout: Ah[k][m]) priority(2*nt - 2*k - m)
+         cblas_dtrsm(CblasColMajor, CblasRight, CblasLower, CblasTrans, CblasNonUnit, ts, ts, 1.0, Ah[k][k], lda, Ah[k][m], ldb);
       }
 
       // Update trailing matrix
-      for (int i = k + 1; i < nt; i++) {
-         for (int j = k + 1; j < i; j++) {
-            #pragma omp task depend(in: Ah[k][i], Ah[k][j]) depend(inout: Ah[j][i]) priority(2*nt - 2*k - i - j)
-            cblas_dgemm(CblasColMajor, CblasNoTrans, CblasTrans, ts, ts, ts, -1.0, Ah[k][i], ts, Ah[k][j], ts, 1.0, Ah[j][i], ts);
+      for (int n = k + 1; n < nt; n++) {
+         #pragma omp task depend(in: Ah[k][n]) depend(inout: Ah[n][n]) priority(2*nt - 2*k - n - n)
+         cblas_dsyrk(CblasColMajor, CblasLower, CblasNoTrans, ts, ts, -1.0, Ah[k][n], lda, 1.0, Ah[n][n], ldb);
+         for (int m = n + 1; m < nt; m++) {
+            #pragma omp task depend(in: Ah[k][m], Ah[k][n]) depend(inout: Ah[n][m]) priority(2*nt - 2*k - m - n)
+            cblas_dgemm(CblasColMajor, CblasNoTrans, CblasTrans, ts, ts, ts, -1.0, Ah[k][m], lda, Ah[k][n], ldb, 1.0, Ah[n][m], ldc);
          }
-         #pragma omp task depend(in: Ah[k][i]) depend(inout: Ah[i][i]) priority(2*nt - 2*k - i - i)
-         cblas_dsyrk(CblasColMajor, CblasLower, CblasNoTrans, ts, ts, -1.0, Ah[k][i], ts, 1.0, Ah[i][i], ts);
       }
    }
 
@@ -183,10 +186,14 @@ void convert_to_blocks(const int ts, const int DIM, const int N, double Alin[N][
 #ifdef VERBOSE
 	printf("> Converting linear matrix to blocks...\n");
 #endif
-   for (int i = 0; i < DIM; i++)
+   // for (int i = 0; i < DIM; i++)
+   //    for (int j = 0; j < DIM; j++) {
+   //       gather_block ( N, ts, &Alin[i*ts][j*ts], A[i][j]);
+   //    }
+   for (int i = 0; i < DIM; i++) 
       for (int j = 0; j < DIM; j++) {
-         gather_block ( N, ts, &Alin[i*ts][j*ts], A[i][j]);
-      }
+         A[i][j] = &Alin[i*ts][j*ts];
+   }
 }
 
 void convert_to_linear(const int ts, const int DIM, const int N, double *A[DIM][DIM], double Alin[N][N])
@@ -240,12 +247,12 @@ int main(int argc, char* argv[])
 
    // Allocate blocked matrix
    double *Ah[nt][nt];
-   for (int i = 0; i < nt; i++) {
-      for (int j = 0; j < nt; j++) {
-         Ah[i][j] = malloc(ts * ts * sizeof(double));
-         assert(Ah[i][j] != NULL);
-      }
-   }
+   // for (int i = 0; i < nt; i++) {
+   //    for (int j = 0; j < nt; j++) {
+   //       Ah[i][j] = malloc(ts * ts * sizeof(double));
+   //       assert(Ah[i][j] != NULL);
+   //    }
+   // }
 
    // ---------------------------------------
    // Convert, compute (time), and re-convert
@@ -254,15 +261,15 @@ int main(int argc, char* argv[])
    const float tref = get_time();
    cholesky(ts, nt, (double* (*)[nt]) Ah);
    const float time = get_time() - tref;
-   convert_to_linear(ts, nt, n, Ah, (double (*)[n]) matrix);
+   // convert_to_linear(ts, nt, n, Ah, (double (*)[n]) matrix);
 
    // Free blocked matrix
-   for (int i = 0; i < nt; i++) {
-      for (int j = 0; j < nt; j++) {
-         assert(Ah[i][j] != NULL);
-         free(Ah[i][j]);
-      }
-   }
+   // for (int i = 0; i < nt; i++) {
+   //    for (int j = 0; j < nt; j++) {
+   //       assert(Ah[i][j] != NULL);
+   //       free(Ah[i][j]);
+   //    }
+   // }
 
    // Check result, if requested
    if ( check ) {
